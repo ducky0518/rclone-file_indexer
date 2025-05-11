@@ -1,194 +1,224 @@
-<!doctype html>
-<html>
+<!DOCTYPE html>
+<html lang="en">
 <head>
-    <title>Rclone File Search</title>
+    <meta charset="UTF-8">
+    <title>Rclone File Indexer</title>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <style>
-        #folder-contents {
+        body { font-family: sans-serif; margin: 20px; }
+        ul { list-style-type: none; padding: 0; }
+        li { margin: 2px 0; }
+        a { text-decoration: none; color: blue; }
+        a:hover { text-decoration: underline; }
+        .section { margin-bottom: 30px; }
+        .progress-box { background: #f0f0f0; padding: 10px; border-radius: 5px; white-space: pre-wrap; }
+        .breadcrumb a { margin-right: 5px; }
+        .last-scanned-meta { display: flex; align-items: center; gap: 10px; }
+
+        #directory-container {
             border: 1px solid #ccc;
+            border-radius: 5px;
             padding: 10px;
-            max-height: 300px;
+            max-height: 440px;
             overflow-y: auto;
-            font-family: monospace;
-        }
-        .file-entry, .folder-entry {
-            padding: 2px 0;
-            display: flex;
-            align-items: center;
-        }
-        .file-entry::before {
-            content: "📄 ";
-            margin-right: 5px;
-        }
-        .folder-entry::before {
-            content: "📁 ";
-            margin-right: 5px;
-        }
-        .folder-entry {
-            cursor: pointer;
-            font-weight: bold;
+            background-color: #f9f9f9;
         }
     </style>
-    <script>
-        let intervalId = null;
-        let currentRemote = '';
-        let currentPath = '';
-
-        async function updateFolders() {
-            const remote = document.getElementById('remote').value;
-            currentRemote = remote;
-            currentPath = '';
-            await loadDirectory(remote, '');
-        }
-
-        async function loadDirectory(remote, path) {
-            currentPath = path;
-            const response = await fetch('/browse_dir', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: 'remote=' + encodeURIComponent(remote) + '&path=' + encodeURIComponent(path)
-            });
-            const data = await response.json();
-
-            const container = document.getElementById('folder-contents');
-            container.innerHTML = '';
-
-            const fullPathDisplay = document.getElementById('current-path');
-            fullPathDisplay.textContent = '/' + path;
-            document.getElementById('folder').value = path;
-
-            if (path !== '') {
-                const up = document.createElement('div');
-                up.className = 'folder-entry';
-                up.textContent = '[..] Previous Directory';
-                up.ondblclick = () => {
-                    const parts = path.split('/');
-                    parts.pop();
-                    const parent = parts.join('/');
-                    loadDirectory(remote, parent);
-                };
-                container.appendChild(up);
-            }
-
-            for (const item of data.entries) {
-                const div = document.createElement('div');
-                div.textContent = item.Name;
-                div.className = item.IsDir ? 'folder-entry' : 'file-entry';
-                if (item.IsDir) {
-                    div.ondblclick = () => {
-                        const newPath = path ? path + '/' + item.Name : item.Name;
-                        loadDirectory(remote, newPath);
-                    };
-                }
-                container.appendChild(div);
-            }
-        }
-
-        function startFetch() {
-            const remote = document.getElementById('remote').value;
-            const folder = document.getElementById('folder').value;
-            document.getElementById('progress').style.display = 'block';
-            document.getElementById('progress-output').innerText = "Starting fetch...";
-            document.getElementById('stop-btn').style.display = 'inline';
-
-            fetch('/start_fetch', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: 'remote=' + encodeURIComponent(remote) + '&folder=' + encodeURIComponent(folder)
-            });
-
-            intervalId = setInterval(async () => {
-                const res = await fetch('/progress');
-                const data = await res.json();
-                const output = data.lines.length > 0 ? data.lines.join('\n') : '⏳ Waiting for progress...';
-                const progressElem = document.getElementById('progress-output');
-                progressElem.innerText = output;
-                progressElem.scrollTop = progressElem.scrollHeight;
-            }, 1000);
-
-            return false;
-        }
-
-        async function stopFetch() {
-            clearInterval(intervalId);
-            document.getElementById('progress-output').innerText += '\nStopping...';
-
-            const res = await fetch('/stop_fetch', { method: 'POST' });
-            const data = await res.json();
-            document.getElementById('stop-btn').style.display = 'none';
-
-            if (data.status === 'stopped') {
-                document.getElementById('progress-output').innerText += `\n✔️ Stopped. ${data.inserted} files indexed.`;
-            } else {
-                document.getElementById('progress-output').innerText += '\n❌ Stop failed.';
-            }
-        }
-
-        window.addEventListener('load', () => {
-            const remote = "{{ selected_remote or '' }}";
-            const folder = "{{ selected_folder or '' }}";
-            if (remote && folder !== undefined) {
-                loadDirectory(remote, folder);
-            }
-        });
-    </script>
 </head>
 <body>
-    <h1>Rclone File Search</h1>
 
-    <label>Select Rclone Remote:</label><br>
-    <select id="remote" name="remote" onchange="updateFolders()" required>
+<h1>📁 Rclone File Indexer</h1>
+
+<div class="section">
+    <label for="remote">Select rclone remote:</label>
+    <select name="remote" id="remote">
+        <option value="">-- Select your rclone remote --</option>
         {% for remote in remotes %}
-        <option value="{{ remote }}" {% if remote == selected_remote %}selected{% endif %}>{{ remote }}</option>
+            <option value="{{ remote }}" {% if remote == selected_remote %}selected{% endif %}>{{ remote }}</option>
         {% endfor %}
     </select>
+</div>
 
-    <div>
-        <h3>Browsing Path: <span id="current-path">/{{ selected_folder or '' }}</span></h3>
-        <div id="folder-contents"></div>
+<div class="section">
+    <h3>Browsing Path:</h3>
+    <div class="breadcrumb" id="breadcrumb-nav"></div>
+
+    <form id="scan-form" method="post" action="/start_fetch" style="display: none;">
+        <input type="hidden" name="remote" id="scan-remote" value="{{ selected_remote or '' }}">
+        <input type="hidden" name="folder" id="folder" value="{{ selected_folder or '' }}">
+        <button type="submit">🔍 Start Scan</button>
+        <p><small>This will scan and index all of the files in this folder and any subdirectories.</small></p>
+    </form>
+
+    <div class="last-scanned-meta" id="last-scanned"></div>
+
+    <div id="directory-container">
+        <div id="directory-listing"></div>
     </div>
+</div>
 
-    <form onsubmit="return startFetch();">
-        <input type="hidden" id="folder" name="folder" value="{{ selected_folder or '' }}">
-        <button type="submit">Index files at this level</button>
-        <button type="button" id="stop-btn" style="display:none;" onclick="stopFetch()">Stop</button>
-    </form>
+<div class="section">
+    <h3>Scan Progress</h3>
+    <div class="progress-box" id="progress-text"></div>
+    <button id="stop-scan" style="display:none;" onclick="stopScan()">🛑 Stop Scan</button>
+</div>
 
-    <form action="/clear_db" method="post" style="margin-top: 10px;">
-        <button type="submit" onclick="return confirm('Are you sure you want to clear all indexed data?');">🧹 Clear Database</button>
-    </form>
-
-    <form action="/debug_db" method="get" style="margin-top: 10px;">
-        <button type="submit">🔍 View Database Listings</button>
-    </form>
-
-    <div id="progress" style="display:block; margin-top:20px;">
-        <h3>Progress:</h3>
-        <pre id="progress-output" style="background:#eee; padding:10px; max-height:300px; overflow:auto;">{% if progress_buffer %}{{ progress_buffer | join('\n') }}{% endif %}</pre>
-    </div>
-
-    <hr>
-
-    <form method="POST" action="/search">
-        <label>Search Files:</label><br>
-        <input type="text" name="query" placeholder="filename..." value="{{ query or '' }}" required>
-        <input type="hidden" name="remote" value="{{ selected_remote }}">
-        <input type="hidden" name="folder" value="{{ selected_folder }}">
+<div class="section">
+    <form id="search-form" method="post" action="/search">
+        <input type="text" name="query" placeholder="Search filename..." value="{{ query or '' }}" required>
+        <input type="hidden" name="remote" value="{{ selected_remote or '' }}">
+        <input type="hidden" name="folder" value="{{ selected_folder or '' }}">
         <button type="submit">Search</button>
     </form>
 
-    {% if results is defined %}
-        {% if results %}
-            <hr>
-            <h3>Search Results:</h3>
-            <ul>
-                {% for remote, path in results %}
-                    <li><strong>{{ remote }}</strong>: {{ path }}</li>
-                {% endfor %}
-            </ul>
-        {% else %}
-            <hr>
-            <p><em>No matches found for "{{ query }}"</em></p>
-        {% endif %}
-    {% endif %}
+{% if results %}
+    <h3>Search Results ({{ results|length }})</h3>
+    <ul>
+    {% for remote, path in results %}
+        <li>{{ remote }} | {{ path }}</li>
+    {% endfor %}
+    </ul>
+{% endif %}
+</div>
+
+<div class="section" id="db-stats" style="margin-bottom: 10px;">
+    📊 <span id="file-count-display">Loading file count...</span>
+</div>
+
+<div class="section">
+    <a href="/debug_db">📋 View Database Listings</a> |
+    <a href="/clear_db">🧹 Clear Entire Database</a>
+</div>
+
+<script>
+function formatDatetime(isoString) {
+    const date = new Date(isoString);
+    return date.toLocaleString(undefined, {
+        dateStyle: 'medium',
+        timeStyle: 'short'
+    });
+}
+
+function renderBreadcrumb(path) {
+    const parts = path.split('/').filter(Boolean);
+    let html = `<a href="#" onclick="browseInto(currentRemote, '')">🏠 <strong>Root</strong></a>`;
+    if (parts.length > 0) html += ' / ';
+    let accumulated = '';
+    for (let i = 0; i < parts.length; i++) {
+        accumulated += (accumulated ? '/' : '') + parts[i];
+        html += `<a href="#" onclick="browseInto('${currentRemote}', '${accumulated}')">${parts[i]}</a>`;
+        if (i < parts.length - 1) html += ' / ';
+    }
+    $("#breadcrumb-nav").html(html);
+}
+
+
+let currentRemote = "";
+
+function fetchDirectory(remote, path) {
+    currentRemote = remote;
+    $("#scan-remote").val(remote);
+
+    $.post("/browse_dir", { remote: remote, path: path }, function(data) {
+        let listing = "<ul>";
+        for (let item of data.entries) {
+            const safePath = (path ? path + '/' : '') + item.Name;
+            if (item.IsDir) {
+                listing += `<li><a href="#" onclick="browseInto('${remote}', '${safePath}')">📁 ${item.Name}</a></li>`;
+            } else {
+                listing += `<li>📄 ${item.Name}</li>`;
+            }
+        }
+        listing += "</ul>";
+        $("#directory-listing").html(listing);
+        $("#folder").val(path);
+        renderBreadcrumb(path || '');
+        $("#scan-form").show();
+
+        // ✅ Update last scanned display from backend
+        if (data.last_scanned) {
+            let html = `<p><strong>Last scanned:</strong> ${formatDatetime(data.last_scanned)}`;
+            if (data.scan_status === 'partial') {
+                html += ` <span style="color: orange;">(incomplete)</span>`;
+            }
+            html += `</p><button id="rescan-button">🔁 Rescan This Folder</button>`;
+            $("#last-scanned").html(html);
+
+            $("#rescan-button").click(() => {
+                startScan(remote, path);
+            });
+        } else {
+            $("#last-scanned").html('');
+        }
+    });
+}
+
+function browseInto(remote, path) {
+    fetchDirectory(remote, path);
+}
+
+function startScan(remote, path) {
+    $.post("/start_fetch", { remote: remote, folder: path }, function(data) {
+        if (data.status === "started") {
+            $("#stop-scan").show();
+            pollProgress();
+        }
+    });
+}
+
+function stopScan() {
+    $.post("/stop_fetch", function(data) {
+        $("#progress-text").append("\n⏹️ Scan stopped.");
+        $("#stop-scan").hide();
+        updateFileCount();
+    });
+}
+
+function pollProgress() {
+    $.get("/progress", function (data) {
+        const lines = data.lines;
+        const lastLine = lines[lines.length - 1] || "";
+        $("#progress-text").text(lines.join("\n"));
+
+        if (lastLine.includes("✅ Indexing complete") || lastLine.includes("⏹️ Scan stopped.")) {
+            $("#stop-scan").hide();
+            updateFileCount();
+        } else {
+            setTimeout(pollProgress, 1000);
+        }
+    });
+}
+
+function updateFileCount() {
+    $.get("/file_count", function(data) {
+        $("#file-count-display").text(`${data.count.toLocaleString()} files currently indexed`);
+    });
+}
+
+$("#remote").change(function () {
+    const remote = $(this).val();
+    $("#scan-remote").val(remote);
+    if (remote) {
+        fetchDirectory(remote, '');
+    } else {
+        $("#directory-listing").empty();
+        $("#breadcrumb-nav").text('/');
+        $("#last-scanned").empty();
+        $("#scan-form").hide();
+    }
+});
+
+$("#scan-form").submit(function (e) {
+    e.preventDefault();
+    const remote = $("#remote").val();
+    const path = $("#folder").val();
+    startScan(remote, path);
+});
+
+$(document).ready(function () {
+    updateFileCount();
+});
+</script>
+
 </body>
 </html>
