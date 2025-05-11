@@ -6,14 +6,18 @@ A web-based tool for browsing, indexing, and searching files from any [rclone](h
 
 ## ✅ Features
 
-- 🔍 **Search any part of a filename** and get full remote path results  
-- 💾 **Persistent database** using SQLite to accumulate file listings across multiple scans  
-- 📡 **Reads from existing `rclone` config** – no need to enter remotes manually  
-- 📂 **Visual folder tree browser** with double-click navigation  
-- 🧭 **Real-time progress log** from `rclone -v` output  
-- ⏹️ **Stop scans anytime**, saving what was indexed up to that point  
-- 🧹 **Clear entire database** with one button  
-- 🧪 **Debug mode** to view raw file listings from the database  
+- 🗂 **Browse `rclone` remotes** and subdirectories visually
+- 📡 **Reads from existing rclone config** – no need to enter remotes manually
+- 🧭 **Breadcrumb navigation** with 🏠 root awareness
+- 🧠 **"Last Scanned" status** shown for every folder
+- 🔁 **Scan & index folders recursively** with progress feedback
+- 📦 **Displays total indexed files** (live)
+- ⏹️ **Stop scans anytime**, saving what was indexed up to that point
+- 🔍 **Search any part of a filename** and get full remote path results (powered by SQLite FTS5 full-text search)
+- 🔎 Search results **display exact match count**
+- 💾 **Persistent database** using SQLite to accumulate file listings across multiple scans
+- 🧹 **Clear entire database** with one button (and confirmation)
+- 🧪 **Database view mode** to view raw file listings from the database without searching
 - 🌐 **Flask-based UI** with live updates and folder context awareness
 
 ---
@@ -30,6 +34,7 @@ A web-based tool for browsing, indexing, and searching files from any [rclone](h
 - `rclone` installed and in your system's PATH
 - Existing `rclone.conf` with configured remotes (e.g. in `~/.config/rclone/rclone.conf` or `C:\Users\YourName\.config\rclone\rclone.conf`)
 - Flask
+- ijson
 
 ---
 
@@ -45,7 +50,7 @@ cd rclone-file-indexer
 2. **Install Python dependencies**
 
 ```bash
-pip install flask
+pip install flask ijson
 ```
 
 3. **Run the app**
