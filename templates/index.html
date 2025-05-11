@@ -1,0 +1,194 @@
+<!doctype html>
+<html>
+<head>
+    <title>Rclone File Search</title>
+    <style>
+        #folder-contents {
+            border: 1px solid #ccc;
+            padding: 10px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+        }
+        .file-entry, .folder-entry {
+            padding: 2px 0;
+            display: flex;
+            align-items: center;
+        }
+        .file-entry::before {
+            content: "📄 ";
+            margin-right: 5px;
+        }
+        .folder-entry::before {
+            content: "📁 ";
+            margin-right: 5px;
+        }
+        .folder-entry {
+            cursor: pointer;
+            font-weight: bold;
+        }
+    </style>
+    <script>
+        let intervalId = null;
+        let currentRemote = '';
+        let currentPath = '';
+
+        async function updateFolders() {
+            const remote = document.getElementById('remote').value;
+            currentRemote = remote;
+            currentPath = '';
+            await loadDirectory(remote, '');
+        }
+
+        async function loadDirectory(remote, path) {
+            currentPath = path;
+            const response = await fetch('/browse_dir', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: 'remote=' + encodeURIComponent(remote) + '&path=' + encodeURIComponent(path)
+            });
+            const data = await response.json();
+
+            const container = document.getElementById('folder-contents');
+            container.innerHTML = '';
+
+            const fullPathDisplay = document.getElementById('current-path');
+            fullPathDisplay.textContent = '/' + path;
+            document.getElementById('folder').value = path;
+
+            if (path !== '') {
+                const up = document.createElement('div');
+                up.className = 'folder-entry';
+                up.textContent = '[..] Previous Directory';
+                up.ondblclick = () => {
+                    const parts = path.split('/');
+                    parts.pop();
+                    const parent = parts.join('/');
+                    loadDirectory(remote, parent);
+                };
+                container.appendChild(up);
+            }
+
+            for (const item of data.entries) {
+                const div = document.createElement('div');
+                div.textContent = item.Name;
+                div.className = item.IsDir ? 'folder-entry' : 'file-entry';
+                if (item.IsDir) {
+                    div.ondblclick = () => {
+                        const newPath = path ? path + '/' + item.Name : item.Name;
+                        loadDirectory(remote, newPath);
+                    };
+                }
+                container.appendChild(div);
+            }
+        }
+
+        function startFetch() {
+            const remote = document.getElementById('remote').value;
+            const folder = document.getElementById('folder').value;
+            document.getElementById('progress').style.display = 'block';
+            document.getElementById('progress-output').innerText = "Starting fetch...";
+            document.getElementById('stop-btn').style.display = 'inline';
+
+            fetch('/start_fetch', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: 'remote=' + encodeURIComponent(remote) + '&folder=' + encodeURIComponent(folder)
+            });
+
+            intervalId = setInterval(async () => {
+                const res = await fetch('/progress');
+                const data = await res.json();
+                const output = data.lines.length > 0 ? data.lines.join('\n') : '⏳ Waiting for progress...';
+                const progressElem = document.getElementById('progress-output');
+                progressElem.innerText = output;
+                progressElem.scrollTop = progressElem.scrollHeight;
+            }, 1000);
+
+            return false;
+        }
+
+        async function stopFetch() {
+            clearInterval(intervalId);
+            document.getElementById('progress-output').innerText += '\nStopping...';
+
+            const res = await fetch('/stop_fetch', { method: 'POST' });
+            const data = await res.json();
+            document.getElementById('stop-btn').style.display = 'none';
+
+            if (data.status === 'stopped') {
+                document.getElementById('progress-output').innerText += `\n✔️ Stopped. ${data.inserted} files indexed.`;
+            } else {
+                document.getElementById('progress-output').innerText += '\n❌ Stop failed.';
+            }
+        }
+
+        window.addEventListener('load', () => {
+            const remote = "{{ selected_remote or '' }}";
+            const folder = "{{ selected_folder or '' }}";
+            if (remote && folder !== undefined) {
+                loadDirectory(remote, folder);
+            }
+        });
+    </script>
+</head>
+<body>
+    <h1>Rclone File Search</h1>
+
+    <label>Select Rclone Remote:</label><br>
+    <select id="remote" name="remote" onchange="updateFolders()" required>
+        {% for remote in remotes %}
+        <option value="{{ remote }}" {% if remote == selected_remote %}selected{% endif %}>{{ remote }}</option>
+        {% endfor %}
+    </select>
+
+    <div>
+        <h3>Browsing Path: <span id="current-path">/{{ selected_folder or '' }}</span></h3>
+        <div id="folder-contents"></div>
+    </div>
+
+    <form onsubmit="return startFetch();">
+        <input type="hidden" id="folder" name="folder" value="{{ selected_folder or '' }}">
+        <button type="submit">Index files at this level</button>
+        <button type="button" id="stop-btn" style="display:none;" onclick="stopFetch()">Stop</button>
+    </form>
+
+    <form action="/clear_db" method="post" style="margin-top: 10px;">
+        <button type="submit" onclick="return confirm('Are you sure you want to clear all indexed data?');">🧹 Clear Database</button>
+    </form>
+
+    <form action="/debug_db" method="get" style="margin-top: 10px;">
+        <button type="submit">🔍 View Database Listings</button>
+    </form>
+
+    <div id="progress" style="display:block; margin-top:20px;">
+        <h3>Progress:</h3>
+        <pre id="progress-output" style="background:#eee; padding:10px; max-height:300px; overflow:auto;">{% if progress_buffer %}{{ progress_buffer | join('\n') }}{% endif %}</pre>
+    </div>
+
+    <hr>
+
+    <form method="POST" action="/search">
+        <label>Search Files:</label><br>
+        <input type="text" name="query" placeholder="filename..." value="{{ query or '' }}" required>
+        <input type="hidden" name="remote" value="{{ selected_remote }}">
+        <input type="hidden" name="folder" value="{{ selected_folder }}">
+        <button type="submit">Search</button>
+    </form>
+
+    {% if results is defined %}
+        {% if results %}
+            <hr>
+            <h3>Search Results:</h3>
+            <ul>
+                {% for remote, path in results %}
+                    <li><strong>{{ remote }}</strong>: {{ path }}</li>
+                {% endfor %}
+            </ul>
+        {% else %}
+            <hr>
+            <p><em>No matches found for "{{ query }}"</em></p>
+        {% endif %}
+    {% endif %}
+</body>
+</html>
