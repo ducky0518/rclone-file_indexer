@@ -1,4 +1,4 @@
-# 📁 Rclone Remote File Indexer & Search (Flask App)
+# 📁 Rclone Remote File Indexer & Search
 
 A web-based tool for browsing, indexing, and searching files from any [rclone](https://rclone.org/) configured remote. Designed for persistent offline file search after scanning various directories and remotes.
 
